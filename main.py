@@ -1,10 +1,12 @@
 import discord
 from discord.ext import commands
 
+from pytimeparse import parse as parse_time
+
 import datetime
 import json
 
-from bot_tools import get_member, error_embed, success_embed, log
+from bot_tools import setup, get_member, error_embed, success_embed, log, mute_member, check_mutes
 
 with open("credentials.json", "r") as creds:
     credentials = json.load(creds)
@@ -30,12 +32,22 @@ ban_log = credentials["ban_log"]
 
 def is_admin() -> bool:
     # @is_admin()
-    async def predicate(ctx):
+    async def predicate(ctx: commands.Context) -> bool:
         user_roles = [role.id for role in ctx.author.roles]
         return (sr_admin in user_roles or
                 srm_admin in user_roles)
 
     return commands.check(predicate)
+
+
+@bot.listen()
+async def on_ready() -> None:
+    print('Logged in as')
+    print(bot.user.name)
+    print(bot.user.id)
+    print('------')
+    setup(credentials, bot, mute_log)
+    bot.loop.create_task(check_mutes())
 
 
 @bot.listen()
@@ -98,7 +110,7 @@ async def on_message_delete(message: discord.Message) -> None:
 
 
 @bot.command()
-async def help(ctx: discord.Context) -> None:
+async def help(ctx: commands.Context) -> None:
     kick = f"\t{bot.command_prefix}**kick** <member> <reason>"
     ban = f"\t{bot.command_prefix}**ban** <member> <reason>"
     help = f"\t{bot.command_prefix}**help**"
@@ -115,7 +127,7 @@ async def help(ctx: discord.Context) -> None:
 
 
 @bot.command()
-async def online(ctx: discord.Context) -> None:
+async def online(ctx: commands.Context) -> None:
     guild = bot.get_guild(sr)
     member_count = guild.member_count
     status_count = [0, 0, 0, 0, 0]  # online, offline, idle, dnd, invisible
@@ -124,7 +136,7 @@ async def online(ctx: discord.Context) -> None:
         status_count[status_list.index(member.status)] += 1
 
     stats = discord.Embed(color=0x506600)
-    stats.add_field(name=f"Total members: {member_count}",value="\n".join([
+    stats.add_field(name=f"Total members: {member_count}", value="\n".join([
         f"<:online:572884944813031434>{status_count[0]}",
         f"<:idle:572884943898673174>{status_count[2]}",
         f"<:do_not_disturb:572884944016113666>{status_count[3]}",
@@ -133,36 +145,37 @@ async def online(ctx: discord.Context) -> None:
 
 
 @bot.command()
-async def ping(ctx: discord.Context):
+async def ping(ctx: commands.Context):
     await ctx.send(f"Pong! ({round(bot.latency, 3) * 1000}ms)")
 
 
 @bot.command()
 @is_admin()
-async def mute(ctx: discord.Context, user: str, time: str = "12h") -> None:
-    time_scale = time[-1]
-    time_period = time[:-1]
-
+async def mute(ctx: commands.Context, user: str, *args: str) -> None:
     member = await get_member(ctx, bot.get_guild(sr), user)
     if member is None:
         await ctx.send(embed=await error_embed(f"Unknown user '{user}''"))
 
-    if time_scale not in "smhdw":
-        await ctx.send(embed=await error_embed(f"Unknown timescale '{time_scale}''"))
-        return
+    n_seconds = parse_time("".join(*args))
+    if n_seconds is None:
+        await ctx.send(embed=await error_embed(f"Unknown time period '{' '.join(*args)}'"))
 
-    try:
-        time_period = int(time_period)
-    except ValueError as e:
-        await ctx.send(embed=await error_embed(f"Unknown length '{time_period}''"))
-        return
+    await mute_member(member, n_seconds)
+    await ctx.send(embed=await success_embed(f"Muted '{user}' for {str(datetime.timedelta(seconds=n_seconds))}"))
 
-    # TODO: finish this command
+    desc = await log("mutes", {"Muted": member.name,
+                               "Muted by": ctx.message.author.name,
+                               "Time period": str(datetime.timedelta(seconds=n_seconds)),
+                               "Timestamp": ctx.message.created_at.now().isoformat()})
+
+    embed = discord.Embed(title="Muted member", description=desc, color=0xFFA500)
+    channel = bot.get_channel(mute_log)
+    await channel.send(embed=embed)
 
 
 @bot.command()
 @is_admin()
-async def kick(ctx: discord.Context, user: str, *args: str) -> None:
+async def kick(ctx: commands.Context, user: str, *args: str) -> None:
     member = await get_member(ctx, bot.get_guild(sr), user)
     if member is None:
         await ctx.send(embed=await error_embed(f"Unknown user '{user}''"))
@@ -189,7 +202,7 @@ async def kick(ctx: discord.Context, user: str, *args: str) -> None:
 
 @bot.command()
 @is_admin()
-async def ban(ctx: discord.Context, user: str, *args: str) -> None:
+async def ban(ctx: commands.Context, user: str, *args: str) -> None:
     member = await get_member(ctx, bot.get_guild(sr), user)
     if member is None:
         await ctx.send(embed=await error_embed(f"Unknown user '{user}''"))

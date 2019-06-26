@@ -1,9 +1,23 @@
 import discord
+import datetime
+import asyncio
 from discord.ext import commands
 
 import re
 import json
 import os
+
+mute_cache = []
+credentials = None
+bot = None
+mute_log = None
+
+
+def setup(creds, client, mutes) -> None:
+    global credentials, bot, mute_log
+    credentials = creds
+    bot = client
+    mute_log = mutes
 
 
 def _get_from_guilds(bot, getter, argument):
@@ -16,10 +30,7 @@ def _get_from_guilds(bot, getter, argument):
 
 
 async def get_member(ctx, guild, argument):
-    bot = ctx.bot
     match = re.match(r'([0-9]{15,21})$', argument) or re.match(r'<@!?([0-9]+)>$', argument)
-    # guild = ctx.guild
-    result = None
     if match is None:
         # not a mention...
         if guild:
@@ -37,7 +48,38 @@ async def get_member(ctx, guild, argument):
 
 
 async def mute_member(member: discord.Member, n_seconds: int) -> None:
-    pass
+    guild = discord.utils.get(bot.guilds, id=credentials["server_main"])
+    role = discord.utils.get(guild.roles, id=credentials["mute_role"])
+    await member.add_roles(role)
+    mute_cache.append((member, datetime.datetime.now(), n_seconds))
+
+
+async def check_mutes() -> None:
+    global mute_cache
+    while True:
+        guild = discord.utils.get(bot.guilds, id=credentials["server_main"])
+        role = discord.utils.get(guild.roles, id=credentials["mute_role"])
+
+        removed = []
+        for index, (member, timestamp, n_seconds) in enumerate(mute_cache):
+            if (datetime.datetime.now() - timestamp).seconds > n_seconds:
+                await member.remove_roles(role)
+                removed.append(index)
+                desc = await log("mutes", {"Unmuted": member.name,
+                                           "Timestamp": datetime.datetime.now().isoformat()})
+
+                embed = discord.Embed(title="Unmuted member", description=desc, color=0x00CC00)
+                channel = bot.get_channel(mute_log)
+                await channel.send(embed=embed)
+            else:
+                try:
+                    await member.add_roles(role)
+                except discord.errors.NotFound as e:
+                    pass
+
+        mute_cache = [mute for index, mute in enumerate(mute_cache) if index not in removed]
+
+        await asyncio.sleep(1)
 
 
 async def log(logname, data):
@@ -48,8 +90,8 @@ async def log(logname, data):
     if len(desc) > 1900:
         if "ID" in data:
             return f"**ID**: {data['ID']}" \
-            f"This log is too large to fit on discord." \
-            f"If you want to view it, \nsend me the ID and I can check the bot logs"
+                f"This log is too large to fit on discord." \
+                f"If you want to view it, \nsend me the ID and I can check the bot logs"
 
         else:
             return f"This log is too large to fit on discord"
