@@ -28,13 +28,13 @@ mute_log = credentials["mute_log"]
 kick_log = credentials["kick_log"]
 ban_log = credentials["ban_log"]
 
+
 def is_admin():
     # @is_admin()
     async def predicate(ctx):
         user_roles = [role.id for role in ctx.author.roles]
         return ((sr_admin in user_roles) or
-               (srm_admin in user_roles) or
-               (test_admin in user_roles))
+               (srm_admin in user_roles))
     return commands.check(predicate)
 
 @bot.listen()
@@ -105,6 +105,10 @@ async def online(ctx):
                                              f"<:do_not_disturb:572884944016113666>{status_count[2]}",
                                              f"<:offline:572884944343269378>{status_count[3]}"]))
     await ctx.send(embed=stats)
+
+@bot.command()
+async def ping(ctx):
+    await ctx.send(f"Pong! ({round(bot.latency, 3)*1000}ms)")
 
 
 @bot.command()
