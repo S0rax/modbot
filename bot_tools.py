@@ -5,6 +5,14 @@ import re
 import json
 import os
 
+def _get_from_guilds(bot, getter, argument):
+    result = None
+    for guild in bot.guilds:
+        result = getattr(guild, getter)(argument)
+        if result:
+            return result
+    return result
+
 async def get_member( ctx, guild, argument):
         bot = ctx.bot
         match = re.match(r'([0-9]{15,21})$', argument) or re.match(r'<@!?([0-9]+)>$', argument)
