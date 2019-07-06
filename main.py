@@ -1,14 +1,11 @@
-import discord
-from discord.ext import commands
-
-from pytimeparse import parse as parse_time
-
 import datetime
 import json
-
+import discord
+from discord.ext import commands
+from pytimeparse import parse as parse_time
 from bot_tools import setup, get_member, error_embed, success_embed, log, mute_member, check_mutes
 
-with open("credentials.json", "r") as creds:
+with open("data/credentials.json", "r") as creds:
     credentials = json.load(creds)
 
 bot = commands.Bot(
@@ -29,6 +26,8 @@ mute_log = credentials["mute_log"]
 kick_log = credentials["kick_log"]
 ban_log = credentials["ban_log"]
 
+blacklist = open("data/blacklist.txt", "r").read().split("\n")
+
 
 def is_admin() -> bool:
     # @is_admin()
@@ -40,21 +39,35 @@ def is_admin() -> bool:
     return commands.check(predicate)
 
 
+@bot.event
+async def on_message(message: discord.Message) -> None:
+    if message.content in blacklist:
+        await log("profanity", {
+            "ID": message.id,
+            "User": str(message.author),
+            "Channel": message.channel.name,
+            "Message": message.clean_content,
+            "Timestamp": (
+                message.edited_at.now().isoformat()
+                if message.edited_at is not None else
+                message.created_at.now().isoformat()
+            )
+        })
+        await message.delete()
+        await mute_member(message.author, 3600)
+        # up to you for how long, I put 1 hour
+
+
 @bot.listen()
 async def on_ready() -> None:
-    print('Logged in as')
-    print(bot.user.name)
-    print(bot.user.id)
-    print('------')
+    print(f"Logged in as\n{bot.user.name}\n{bot.user.id}\n{20 * '-'}")
     setup(credentials, bot, mute_log)
     bot.loop.create_task(check_mutes())
 
 
 @bot.listen()
 async def on_message_edit(before: discord.Message, after: discord.Message) -> None:
-    if (after.author.bot or
-            after.guild == bot.get_guild(sr) or
-            before.content == after.content):
+    if after.author.bot or after.guild == bot.get_guild(sr) or before.content == after.content:
         return
 
     desc = await log("edited_messages", {
@@ -64,9 +77,11 @@ async def on_message_edit(before: discord.Message, after: discord.Message) -> No
         "Before": before.clean_content,
         "After": after.clean_content,
         "Jump To": f"[Link]({after.jump_url})",
-        "Timestamp": (after.edited_at.now().isoformat()
-                      if after.edited_at is not None else
-                      after.created_at.now().isoformat())
+        "Timestamp": (
+            after.edited_at.now().isoformat()
+            if after.edited_at is not None else
+            after.created_at.now().isoformat()
+        )
     })
 
     desc = "\n".join([line for line in desc.split("\n") if not line.startswith("**User**")])
@@ -86,15 +101,17 @@ async def on_message_delete(message: discord.Message) -> None:
     if message.author.bot or message.guild != bot.get_guild(sr):
         return
 
-    desc = await log("deleted_messages",
-                     {"ID": message.id,
-                      "User": str(message.author),
-                      "Channel": message.channel.name,
-                      "Message": message.clean_content,
-                      "Timestamp": (message.edited_at.now().isoformat()
-                                    if message.edited_at is not None else
-                                    message.created_at.now().isoformat())
-                      })
+    desc = await log("deleted_messages", {
+        "ID": message.id,
+        "User": str(message.author),
+        "Channel": message.channel.name,
+        "Message": message.clean_content,
+        "Timestamp": (
+            message.edited_at.now().isoformat()
+            if message.edited_at is not None else
+            message.created_at.now().isoformat()
+        )
+    })
 
     desc = "\n".join([line for line in desc.split("\n") if not line.startswith("**User**")])
 
@@ -140,21 +157,22 @@ async def online(ctx: commands.Context) -> None:
         f"<:online:572884944813031434>{status_count[0]}",
         f"<:idle:572884943898673174>{status_count[2]}",
         f"<:do_not_disturb:572884944016113666>{status_count[3]}",
-        f"<:offline:572884944343269378>{status_count[1] + status_count[4]}"]))
+        f"<:offline:572884944343269378>{status_count[1] + status_count[4]}"
+    ]))
     await ctx.send(embed=stats)
 
 
 @bot.command()
-async def ping(ctx: commands.Context):
-    await ctx.send(f"Pong! ({round(bot.latency, 3) * 1000}ms)")
+async def ping(ctx: commands.Context) -> None:
+    await ctx.send(f"Pong! ({round(bot.latency, 3) * 1e3}ms)")
 
 
 @bot.command()
 @is_admin()
 async def mute(ctx: commands.Context, user: str, *args: str) -> None:
-    member = await get_member(ctx, bot.get_guild(sr), user)
+    member = await get_member(bot.get_guild(sr), user)
     if member is None:
-        await ctx.send(embed=await error_embed(f"Unknown user '{user}''"))
+        await ctx.send(embed=await error_embed(f"Unknown user '{user}'"))
 
     n_seconds = parse_time("".join(*args))
     if n_seconds is None:
@@ -163,10 +181,12 @@ async def mute(ctx: commands.Context, user: str, *args: str) -> None:
     await mute_member(member, n_seconds)
     await ctx.send(embed=await success_embed(f"Muted '{user}' for {str(datetime.timedelta(seconds=n_seconds))}"))
 
-    desc = await log("mutes", {"Muted": member.name,
-                               "Muted by": ctx.message.author.name,
-                               "Time period": str(datetime.timedelta(seconds=n_seconds)),
-                               "Timestamp": ctx.message.created_at.now().isoformat()})
+    desc = await log("mutes", {
+        "Muted": member.name,
+        "Muted by": ctx.message.author.name,
+        "Time period": str(datetime.timedelta(seconds=n_seconds)),
+        "Timestamp": ctx.message.created_at.now().isoformat()
+    })
 
     embed = discord.Embed(title="Muted member", description=desc, color=0xFFA500)
     channel = bot.get_channel(mute_log)
@@ -176,24 +196,26 @@ async def mute(ctx: commands.Context, user: str, *args: str) -> None:
 @bot.command()
 @is_admin()
 async def kick(ctx: commands.Context, user: str, *args: str) -> None:
-    member = await get_member(ctx, bot.get_guild(sr), user)
+    member = await get_member(bot.get_guild(sr), user)
     if member is None:
-        await ctx.send(embed=await error_embed(f"Unknown user '{user}''"))
+        await ctx.send(embed=await error_embed(f"Unknown user '{user}'"))
 
     try:
         await bot.get_guild(sr).kick(member, reason=" ".join(args))
         await ctx.send(embed=await success_embed(f"Kicked '{user}'"))
     except discord.Forbidden:
-        await ctx.send(embed=await error_embed(f"This bot does not have the `kick_members` permission."))
+        await ctx.send(embed=await error_embed("This bot does not have the `kick_members` permission."))
         return
     except discord.HTTPException:
-        await ctx.send(embed=await error_embed(f"HTTP Error, try again?"))
+        await ctx.send(embed=await error_embed("HTTP Error, try again?"))
         return
 
-    desc = await log("kicks", {"Kicked": member.name,
-                               "Kicked by": ctx.message.author.name,
-                               "Reason": " ".join(args),
-                               "Timestamp": ctx.message.created_at.now().isoformat()})
+    desc = await log("kicks", {
+        "Kicked": member.name,
+        "Kicked by": ctx.message.author.name,
+        "Reason": " ".join(args),
+        "Timestamp": ctx.message.created_at.now().isoformat()
+    })
 
     embed = discord.Embed(title="Kicked member", description=desc, color=0xFFA500)
     channel = bot.get_channel(kick_log)
@@ -203,9 +225,9 @@ async def kick(ctx: commands.Context, user: str, *args: str) -> None:
 @bot.command()
 @is_admin()
 async def ban(ctx: commands.Context, user: str, *args: str) -> None:
-    member = await get_member(ctx, bot.get_guild(sr), user)
+    member = await get_member(bot.get_guild(sr), user)
     if member is None:
-        await ctx.send(embed=await error_embed(f"Unknown user '{user}''"))
+        await ctx.send(embed=await error_embed(f"Unknown user '{user}'"))
 
     try:
         await bot.get_guild(sr).ban(member, reason=" ".join(args))
@@ -217,10 +239,12 @@ async def ban(ctx: commands.Context, user: str, *args: str) -> None:
         await ctx.send(embed=await error_embed(f"HTTP Error, try again?"))
         return
 
-    desc = await log("bans", {"Banned": member.name,
-                              "Banned by": ctx.message.author.name,
-                              "Reason": " ".join(args),
-                              "Timestamp": ctx.message.created_at.now().isoformat()})
+    desc = await log("bans", {
+        "Banned": member.name,
+        "Banned by": ctx.message.author.name,
+        "Reason": " ".join(args),
+        "Timestamp": ctx.message.created_at.now().isoformat()
+    })
 
     embed = discord.Embed(title="Banned member", description=desc, color=0xCC0000)
     channel = bot.get_channel(ban_log)

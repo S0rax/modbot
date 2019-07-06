@@ -1,7 +1,6 @@
 import discord
 import datetime
 import asyncio
-from discord.ext import commands
 
 import re
 import json
@@ -13,14 +12,12 @@ bot = None
 mute_log = None
 
 
-def setup(creds, client, mutes) -> None:
+def setup(creds: dict, client: discord.Client, mutes: int) -> None:
     global credentials, bot, mute_log
-    credentials = creds
-    bot = client
-    mute_log = mutes
+    credentials, bot, mute_log = creds, client, mutes
 
 
-def _get_from_guilds(bot, getter, argument):
+def _get_from_guilds(bot: discord.Client, getter: str, argument: str or int) -> discord.Member:
     result = None
     for guild in bot.guilds:
         result = getattr(guild, getter)(argument)
@@ -29,7 +26,7 @@ def _get_from_guilds(bot, getter, argument):
     return result
 
 
-async def get_member(ctx, guild, argument):
+async def get_member(guild: discord.Guild, argument: str) -> discord.Member:
     match = re.match(r'([0-9]{15,21})$', argument) or re.match(r'<@!?([0-9]+)>$', argument)
     if match is None:
         # not a mention...
@@ -65,8 +62,10 @@ async def check_mutes() -> None:
             if (datetime.datetime.now() - timestamp).seconds > n_seconds:
                 await member.remove_roles(role)
                 removed.append(index)
-                desc = await log("mutes", {"Unmuted": member.name,
-                                           "Timestamp": datetime.datetime.now().isoformat()})
+                desc = await log("mutes", {
+                    "Unmuted": member.name,
+                    "Timestamp": datetime.datetime.now().isoformat()
+                })
 
                 embed = discord.Embed(title="Unmuted member", description=desc, color=0x00CC00)
                 channel = bot.get_channel(mute_log)
@@ -75,14 +74,14 @@ async def check_mutes() -> None:
                 try:
                     await member.add_roles(role)
                 except discord.errors.NotFound as e:
-                    pass
+                    print(f"Discord 404 - {e.text}")
 
         mute_cache = [mute for index, mute in enumerate(mute_cache) if index not in removed]
 
         await asyncio.sleep(1)
 
 
-async def log(logname, data):
+async def log(logname: str, data: dict) -> str:
     json_data = json.dumps(data)
     with open(os.path.join("logs", f"{logname}.log"), "a") as logfile:
         logfile.write(json_data + "\n")
@@ -90,18 +89,17 @@ async def log(logname, data):
     if len(desc) > 1900:
         if "ID" in data:
             return f"**ID**: {data['ID']}" \
-                f"This log is too large to fit on discord." \
-                f"If you want to view it, \nsend me the ID and I can check the bot logs"
-
+                "This log is too large to fit on discord." \
+                "If you want to view it, \nsend me the ID and I can check the bot logs"
         else:
-            return f"This log is too large to fit on discord"
+            return "This log is too large to fit on discord"
     else:
         return desc
 
 
-async def error_embed(message):
+async def error_embed(message: str) -> discord.Embed:
     return discord.Embed(description=f":x: Error: {message}", color=0xCC0000)
 
 
-async def success_embed(message):
+async def success_embed(message: str) -> discord.Embed:
     return discord.Embed(description=f":white_check_mark: {message}", color=0x00CC00)
